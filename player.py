@@ -166,12 +166,16 @@ class MusicPlayer:
         self.stopped = True
         self.lyrics_display.stop()
         pygame.mixer.music.stop()
+        pygame.mixer.music.unload() # Explicitly unload the music
         if self.analysis_thread:
             self.analysis_thread.join()
         
         # Clean up temporary music file
         if self.music_file_path and os.path.exists(self.music_file_path):
-            os.remove(self.music_file_path)
+            try:
+                os.remove(self.music_file_path)
+            except PermissionError:
+                print(f"[WARNING] Could not remove temporary file: {self.music_file_path}. It might still be in use.")
             self.music_file_path = None
 
     def is_playing(self):
