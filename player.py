@@ -5,8 +5,8 @@ import threading
 import numpy as np
 from pydub import AudioSegment
 from lyrics_display import LyricsDisplay
-
-
+import tempfile
+import os
 
 class MusicPlayer:
     def __init__(self, num_eq_bands=16):
@@ -20,23 +20,35 @@ class MusicPlayer:
         self.raw_data = None
         self.sample_rate = 0
         self.channels = 0
-        self.chunk_size = 2048
-        self.current_pos = 0
-        self.stream_thread = None
+        self.chunk_size = 2048 # This will now be the analysis chunk size
+        self.music_file_path = None # To store path to temporary audio file
+        self.analysis_thread = None # Renamed from stream_thread
 
     def load_song(self, song_path, lyrics_path):
         audio_segment = AudioSegment.from_file(song_path)
         self.sample_rate = audio_segment.frame_rate
         self.channels = audio_segment.channels
         
+        # Ensure mixer is initialized with correct frequency/channels for analysis
         pygame.mixer.quit()
         pygame.mixer.init(frequency=self.sample_rate, size=-16, channels=self.channels, buffer=self.chunk_size)
 
+        # Store raw data for analysis
         samples = np.array(audio_segment.get_array_of_samples())
         if self.channels == 2:
             self.raw_data = samples.reshape((-1, 2))
         else:
             self.raw_data = np.repeat(samples[:, np.newaxis], 2, axis=1)
+
+        # Create a temporary file for pygame.mixer.music
+        if self.music_file_path and os.path.exists(self.music_file_path):
+            os.remove(self.music_file_path)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+            audio_segment.export(tmp_file.name, format="wav")
+            self.music_file_path = tmp_file.name
+        
+        pygame.mixer.music.load(self.music_file_path)
 
         self.song_loaded = True
         print(f"Canción cargada: {song_path} ({self.sample_rate} Hz, {self.channels} canales)")
@@ -54,9 +66,10 @@ class MusicPlayer:
         self.stopped = False
         self.paused = False
         self.lyrics_display.start()
-        self.stream_thread = threading.Thread(target=self._stream_and_analyze)
-        self.stream_thread.daemon = True
-        self.stream_thread.start()
+        pygame.mixer.music.play() # Start music playback
+        self.analysis_thread = threading.Thread(target=self._analyze_audio_and_update_display)
+        self.analysis_thread.daemon = True
+        self.analysis_thread.start()
 
     def _calculate_eq_bands(self, mono_chunk):
         # Aplicar FFT
@@ -95,78 +108,74 @@ class MusicPlayer:
         
         return np.clip(bands, 0, 1).tolist()
 
-    def _stream_and_analyze(self):
-        num_samples = len(self.raw_data)
-        while self.current_pos < num_samples and not self.stopped:
+    def _analyze_audio_and_update_display(self):
+        # This thread will now only analyze audio and update display, not play audio
+        total_samples = len(self.raw_data)
+        analysis_interval_ms = 100 # Analyze every 100 ms
+        analysis_chunk_samples = int(self.sample_rate * (analysis_interval_ms / 1000.0))
+
+        while not self.stopped:
             if self.paused:
                 time.sleep(0.1)
                 continue
 
-            end_pos = self.current_pos + self.chunk_size
-            chunk = self.raw_data[self.current_pos:end_pos]
-            
-            if len(chunk) == 0:
+            current_playback_ms = pygame.mixer.music.get_pos()
+            if current_playback_ms == -1: # Music has stopped or not playing
                 break
 
-            # Timing for sound creation and playback
-            start_sound_time = time.perf_counter()
-            sound = pygame.sndarray.make_sound(chunk)
-            sound.play()
-            end_sound_time = time.perf_counter()
-            # print(f"[DEBUG Player] Sound creation and play took: {(end_sound_time - start_sound_time)*1000:.2f} ms")
+            current_sample_pos = int(current_playback_ms / 1000.0 * self.sample_rate)
+            
+            # Ensure we don't go out of bounds
+            start_sample = max(0, current_sample_pos - analysis_chunk_samples // 2) # Center chunk around current pos
+            end_sample = min(total_samples, start_sample + analysis_chunk_samples)
+            
+            if end_sample - start_sample < analysis_chunk_samples // 2: # Not enough samples for a full chunk at the end
+                break
+
+            chunk_to_analyze = self.raw_data[start_sample:end_sample]
+            
+            if len(chunk_to_analyze) == 0:
+                break
 
             # Normalizar el chunk a [-1.0, 1.0] para el análisis FFT
-            mono_chunk_int = chunk.mean(axis=1)
+            mono_chunk_int = chunk_to_analyze.mean(axis=1)
             normalized_chunk = mono_chunk_int / 32768.0
 
-            # Timing for EQ calculation
-            start_eq_calc_time = time.perf_counter()
             eq_bands = self._calculate_eq_bands(normalized_chunk)
-            end_eq_calc_time = time.perf_counter()
-            # print(f"[DEBUG Player] EQ calculation took: {(end_eq_calc_time - start_eq_calc_time)*1000:.2f} ms")
-
-            # Timing for lyrics_display.update_eq
-            start_update_eq_time = time.perf_counter()
             self.lyrics_display.update_eq(eq_bands)
-            end_update_eq_time = time.perf_counter()
-            # print(f"[DEBUG Player] lyrics_display.update_eq took: {(end_update_eq_time - start_update_eq_time)*1000:.2f} ms")
 
-            current_time_sec = self.current_pos / self.sample_rate
+            current_time_sec = current_playback_ms / 1000.0
             if self.lyrics:
-                # Timing for lyrics_display.update_current_line
-                start_update_lyrics_time = time.perf_counter()
                 self.lyrics_display.update_current_line(self.lyrics, current_time_sec, self)
-                end_update_lyrics_time = time.perf_counter()
-                # print(f"[DEBUG Player] lyrics_display.update_current_line took: {(end_update_lyrics_time - start_update_lyrics_time)*1000:.2f} ms")
 
-            chunk_duration = len(chunk) / self.sample_rate
-            sleep_duration = chunk_duration * 0.95
-            # print(f"[DEBUG Player] Chunk duration: {chunk_duration*1000:.2f} ms, Sleeping for: {sleep_duration*1000:.2f} ms")
-            time.sleep(sleep_duration)
-            
-            self.current_pos += len(chunk)
+            time.sleep(analysis_interval_ms / 1000.0) # Sleep to control analysis frequency
         
         self.stop()
 
     def pause(self):
         self.paused = True
-        pygame.mixer.pause()
+        pygame.mixer.music.pause()
         
     def unpause(self):
         self.paused = False
-        pygame.mixer.unpause()
+        pygame.mixer.music.unpause()
         
     def stop(self):
         if self.stopped:
             return
         self.stopped = True
         self.lyrics_display.stop()
-        pygame.mixer.stop()
-        if self.stream_thread:
-            self.stream_thread.join()
+        pygame.mixer.music.stop()
+        if self.analysis_thread:
+            self.analysis_thread.join()
+        
+        # Clean up temporary music file
+        if self.music_file_path and os.path.exists(self.music_file_path):
+            os.remove(self.music_file_path)
+            self.music_file_path = None
 
     def is_playing(self):
-        return self.song_loaded and not self.stopped and not self.paused
+        return self.song_loaded and not self.stopped and not self.paused and pygame.mixer.music.get_busy()
 
     def is_paused(self):
-        return self.paused
+        return self.paused and not self.stopped
