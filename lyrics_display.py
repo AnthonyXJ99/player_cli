@@ -2,15 +2,17 @@ import random
 import time
 import threading
 import math
+import colorsys # Import colorsys
 from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 from rich.align import Align
 from rich.layout import Layout
+from rich.color import Color
 
 class LyricsDisplay:
     def __init__(self, num_eq_bands=16):
-        self.console = Console()
+        self.console = Console(force_terminal=True)
         self.active = False
         self.live = None
         self.animation_thread = None
@@ -19,6 +21,9 @@ class LyricsDisplay:
         # Estado del ecualizador (controlado externamente)
         self.num_eq_bands = num_eq_bands
         self.eq_bands = [0.0] * self.num_eq_bands
+        self.decayed_eq_bands = [0.0] * self.num_eq_bands # For smoother decay
+        self.decay_rate = 0.2 # How fast bars fall, tune this value
+        self.hue_offset = 0.0 # For dynamic color cycling
         self.eq_lock = threading.Lock()
 
         # Estado de las letras
@@ -39,13 +44,16 @@ class LyricsDisplay:
     def update_eq(self, bands):
         """Método seguro para hilos para actualizar las bandas del ecualizador desde el player."""
         with self.eq_lock:
-            self.eq_bands = bands
+            for i in range(self.num_eq_bands):
+                # Apply decay
+                self.decayed_eq_bands[i] = max(self.decayed_eq_bands[i] - self.decay_rate, 0.0)
+                # Update with new value (only if new value is higher)
+                self.decayed_eq_bands[i] = max(self.decayed_eq_bands[i], bands[i])
 
     def _generate_eq_text(self):
         """Genera un objeto Text de Rich a partir de los datos de las bandas del ecualizador."""
         bar_chars = " ▂▃▄▅▆▇█"
         num_chars = len(bar_chars)
-        colors = ["green", "green", "yellow", "yellow", "red", "red", "red", "red"]
         eq_text = Text()
         
         # Escalar las barras para que se ajusten al ancho de la consola
@@ -53,17 +61,29 @@ class LyricsDisplay:
         for i in range(width):
             band_index = int(i * self.num_eq_bands / width)
             with self.eq_lock:
-                band_height = self.eq_bands[band_index]
+                band_height = self.decayed_eq_bands[band_index]
 
             # Mapear la altura (0.0-1.0) a un carácter de la barra
             char_index = min(int(band_height * num_chars), num_chars - 1)
             char = bar_chars[char_index]
-            color = colors[min(int(band_height * len(colors)), len(colors) - 1)]
-            eq_text.append(char, style=color)
+            
+            # Dynamic color based on hue_offset and band position
+            hue = (i / self.num_eq_bands + self.hue_offset) % 1.0
+            # Saturation and Lightness can also be dynamic based on band_height
+            sat = 0.8 # Fixed for now
+            light = 0.5 + band_height * 0.4 # Brighter for higher bars
+            
+            # Convert HSL to RGB and then to hex for rich
+            r, g, b = colorsys.hls_to_rgb(hue, light, sat)
+            color_hex = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
+            eq_text.append(char, style=color_hex)
         return eq_text
 
     def _animate(self):
         while self.active:
+            # Increment hue_offset for color cycling
+            self.hue_offset = (self.hue_offset + 0.01) % 1.0 # Tune this speed
+
             start_eq_gen_time = time.perf_counter()
             eq_text = self._generate_eq_text()
             end_eq_gen_time = time.perf_counter()
@@ -124,7 +144,7 @@ class LyricsDisplay:
 
     def start(self):
         self.active = True
-        self.live = Live(self.layout, console=self.console, screen=True, refresh_per_second=10)
+        self.live = Live(self.layout, console=self.console, refresh_per_second=10)
         self.live.start(refresh=True)
         self.animation_thread = threading.Thread(target=self._animate)
         self.animation_thread.daemon = True

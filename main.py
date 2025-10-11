@@ -49,21 +49,16 @@ def main():
         song_name = os.path.splitext(os.path.basename(song_path))[0]
         print(f"{i}. {song_name}")
     
-    print("\nCanciones disponibles:")
-    for i, (song_path, lyrics_path) in enumerate(available_songs, 1):
-        song_name = os.path.splitext(os.path.basename(song_path))[0]
-        print(f"{i}. {song_name}")
-    
     try:
         choice = input(f"\nSelecciona una canción (1-{len(available_songs)}): ").strip()
         choice_idx = int(choice) - 1 if choice.isdigit() else 0
         
         if 0 <= choice_idx < len(available_songs):
             song_path, lyrics_path = available_songs[choice_idx]
-            print(f"\nCargando: {os.path.splitext(os.path.basename(song_path))[0]}")
+            # print(f"\nCargando: {os.path.splitext(os.path.basename(song_path))[0]}") # Removed debug print
         else:
             song_path, lyrics_path = available_songs[0]  # Por defecto, primera canción
-            print(f"\nOpción inválida, seleccionando: {os.path.splitext(os.path.basename(song_path))[0]}")
+            # print(f"\nOpción inválida, seleccionando: {os.path.splitext(os.path.basename(song_path))[0]}") # Removed debug print
         
         player.load_song(song_path, lyrics_path)
         player.play()

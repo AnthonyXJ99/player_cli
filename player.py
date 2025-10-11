@@ -51,12 +51,12 @@ class MusicPlayer:
         pygame.mixer.music.load(self.music_file_path)
 
         self.song_loaded = True
-        print(f"Canción cargada: {song_path} ({self.sample_rate} Hz, {self.channels} canales)")
+        # print(f"Canción cargada: {song_path} ({self.sample_rate} Hz, {self.channels} canales)") # Removed debug print
 
         try:
             with open(lyrics_path, 'r', encoding='utf-8') as f:
                 self.lyrics = pylrc.parse(f.read())
-            print(f"Letras cargadas: {lyrics_path}")
+            # print(f"Letras cargadas: {lyrics_path}") # Removed debug print
         except Exception as e:
             self.lyrics = None
 
@@ -175,7 +175,7 @@ class MusicPlayer:
             try:
                 os.remove(self.music_file_path)
             except PermissionError:
-                print(f"[WARNING] Could not remove temporary file: {self.music_file_path}. It might still be in use.")
+                pass # Gracefully ignore if file is still in use, OS will clean up eventually
             self.music_file_path = None
 
     def is_playing(self):
