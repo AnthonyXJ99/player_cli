@@ -2,62 +2,48 @@ import pygame
 import pylrc
 import time
 import threading
-import numpy as np
-from pydub import AudioSegment
+from audio_processor import AudioProcessor
 from lyrics_display import LyricsDisplay
-import tempfile
+from playlist import Playlist
 import os
+from config import DEFAULT_EQ_BANDS
 
 class MusicPlayer:
-    def __init__(self, num_eq_bands=16):
+    def __init__(self, num_eq_bands=DEFAULT_EQ_BANDS):
         self.num_eq_bands = num_eq_bands
         pygame.mixer.init(frequency=44100, size=-16, channels=2, buffer=2048)
         self.lyrics_display = LyricsDisplay(num_eq_bands=self.num_eq_bands)
         self.song_loaded = False
         self.paused = False
         self.stopped = True
-
-        self.raw_data = None
-        self.sample_rate = 0
-        self.channels = 0
-        self.chunk_size = 2048 # This will now be the analysis chunk size
-        self.music_file_path = None # To store path to temporary audio file
-        self.analysis_thread = None # Renamed from stream_thread
+        
+        # Audio processor instance
+        self.audio_processor = AudioProcessor(num_eq_bands=self.num_eq_bands)
+        
+        # Playlist instance
+        self.playlist = Playlist()
+        
+        self.lyrics = None
+        self.analysis_thread = None
+        self.volume = 1.0
 
     def load_song(self, song_path, lyrics_path):
-        audio_segment = AudioSegment.from_file(song_path)
-        self.sample_rate = audio_segment.frame_rate
-        self.channels = audio_segment.channels
-        
-        # Ensure mixer is initialized with correct frequency/channels for analysis
-        pygame.mixer.quit()
-        pygame.mixer.init(frequency=self.sample_rate, size=-16, channels=self.channels, buffer=self.chunk_size)
-
-        # Store raw data for analysis
-        samples = np.array(audio_segment.get_array_of_samples())
-        if self.channels == 2:
-            self.raw_data = samples.reshape((-1, 2))
-        else:
-            self.raw_data = np.repeat(samples[:, np.newaxis], 2, axis=1)
-
-        # Create a temporary file for pygame.mixer.music
-        if self.music_file_path and os.path.exists(self.music_file_path):
-            os.remove(self.music_file_path)
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
-            audio_segment.export(tmp_file.name, format="wav")
-            self.music_file_path = tmp_file.name
-        
-        pygame.mixer.music.load(self.music_file_path)
-
-        self.song_loaded = True
-        # print(f"Canción cargada: {song_path} ({self.sample_rate} Hz, {self.channels} canales)") # Removed debug print
-
         try:
-            with open(lyrics_path, 'r', encoding='utf-8') as f:
-                self.lyrics = pylrc.parse(f.read())
-            # print(f"Letras cargadas: {lyrics_path}") # Removed debug print
+            # Load audio using audio processor
+            music_file_path = self.audio_processor.load_audio(song_path)
+            pygame.mixer.music.load(music_file_path)
+
+            self.song_loaded = True
+
+            try:
+                with open(lyrics_path, 'r', encoding='utf-8') as f:
+                    self.lyrics = pylrc.parse(f.read())
+            except Exception as e:
+                print(f"Warning: Could not load lyrics file: {e}")
+                self.lyrics = None
         except Exception as e:
+            print(f"Error loading song: {e}")
+            self.song_loaded = False
             self.lyrics = None
 
     def play(self):
@@ -71,48 +57,11 @@ class MusicPlayer:
         self.analysis_thread.daemon = True
         self.analysis_thread.start()
 
-    def _calculate_eq_bands(self, mono_chunk):
-        # Aplicar FFT
-        fft_result = np.fft.rfft(mono_chunk)
-        fft_magnitude = np.abs(fft_result)
-
-        # Escala logarítmica para las frecuencias
-        min_freq = 20
-        max_freq = self.sample_rate / 2
-        log_freq_space = np.logspace(np.log10(min_freq), np.log10(max_freq), self.num_eq_bands + 1)
-        
-        bands = []
-        fft_freqs = np.fft.rfftfreq(len(mono_chunk), 1.0 / self.sample_rate)
-
-        for i in range(self.num_eq_bands):
-            start_idx = np.searchsorted(fft_freqs, log_freq_space[i])
-            end_idx = np.searchsorted(fft_freqs, log_freq_space[i+1])
-            if start_idx == end_idx:
-                bands.append(0)
-                continue
-            avg_magnitude = np.mean(fft_magnitude[start_idx:end_idx])
-            bands.append(avg_magnitude)
-
-        if not bands:
-            return [0.0] * self.num_eq_bands
-
-        # Normalización mejorada
-        bands = np.array(bands)
-        bands = np.log1p(bands * 5) # Aplicar ganancia y escala logarítmica
-        
-        # Usar un techo fijo o un máximo dinámico más estable para normalizar
-        # Esto evita que el ecualizador "salte" mucho con los cambios de volumen
-        max_val = max(5.0, np.max(bands)) # Evita la división por cero y estabiliza
-        if max_val > 0:
-            bands = bands / max_val
-        
-        return np.clip(bands, 0, 1).tolist()
+    # Removed the private _calculate_eq_bands method as it's now in the AudioProcessor class
 
     def _analyze_audio_and_update_display(self):
         # This thread will now only analyze audio and update display, not play audio
-        total_samples = len(self.raw_data)
-        analysis_interval_ms = 100 # Analyze every 100 ms
-        analysis_chunk_samples = int(self.sample_rate * (analysis_interval_ms / 1000.0))
+        analysis_chunk_samples = int(self.audio_processor.sample_rate * 0.1)  # 100ms chunks
 
         while not self.stopped:
             if self.paused:
@@ -120,35 +69,25 @@ class MusicPlayer:
                 continue
 
             current_playback_ms = pygame.mixer.music.get_pos()
-            if current_playback_ms == -1: # Music has stopped or not playing
+            if current_playback_ms == -1:  # Music has stopped or not playing
                 break
 
-            current_sample_pos = int(current_playback_ms / 1000.0 * self.sample_rate)
+            # Get audio chunk for analysis
+            normalized_chunk = self.audio_processor.get_audio_chunk(current_playback_ms, analysis_chunk_samples)
             
-            # Ensure we don't go out of bounds
-            start_sample = max(0, current_sample_pos - analysis_chunk_samples // 2) # Center chunk around current pos
-            end_sample = min(total_samples, start_sample + analysis_chunk_samples)
-            
-            if end_sample - start_sample < analysis_chunk_samples // 2: # Not enough samples for a full chunk at the end
+            if len(normalized_chunk) == 0:
                 break
 
-            chunk_to_analyze = self.raw_data[start_sample:end_sample]
-            
-            if len(chunk_to_analyze) == 0:
-                break
-
-            # Normalizar el chunk a [-1.0, 1.0] para el análisis FFT
-            mono_chunk_int = chunk_to_analyze.mean(axis=1)
-            normalized_chunk = mono_chunk_int / 32768.0
-
-            eq_bands = self._calculate_eq_bands(normalized_chunk)
+            eq_bands = self.audio_processor.calculate_eq_bands(normalized_chunk)
             self.lyrics_display.update_eq(eq_bands)
 
             current_time_sec = current_playback_ms / 1000.0
+            total_time = self.audio_processor.get_duration()
+            self.lyrics_display.update_progress(current_time_sec, total_time)
             if self.lyrics:
                 self.lyrics_display.update_current_line(self.lyrics, current_time_sec, self)
 
-            time.sleep(analysis_interval_ms / 1000.0) # Sleep to control analysis frequency
+            time.sleep(0.1)  # Sleep to control analysis frequency
         
         self.stop()
 
@@ -166,20 +105,95 @@ class MusicPlayer:
         self.stopped = True
         self.lyrics_display.stop()
         pygame.mixer.music.stop()
-        pygame.mixer.music.unload() # Explicitly unload the music
+        pygame.mixer.music.unload()  # Explicitly unload the music
         if self.analysis_thread:
             self.analysis_thread.join()
         
-        # Clean up temporary music file
-        if self.music_file_path and os.path.exists(self.music_file_path):
-            try:
-                os.remove(self.music_file_path)
-            except PermissionError:
-                pass # Gracefully ignore if file is still in use, OS will clean up eventually
-            self.music_file_path = None
+        # Clean up audio processor resources
+        self.audio_processor.cleanup()
 
     def is_playing(self):
         return self.song_loaded and not self.stopped and not self.paused and pygame.mixer.music.get_busy()
 
     def is_paused(self):
         return self.paused and not self.stopped
+        
+    def set_volume(self, volume):
+        """Set volume level (0.0 to 1.0)"""
+        if 0.0 <= volume <= 1.0:
+            self.volume = volume
+            pygame.mixer.music.set_volume(volume)
+    
+    def get_volume(self):
+        """Get current volume level"""
+        return self.volume
+    
+    def increase_volume(self):
+        """Increase volume by 0.1"""
+        new_volume = min(1.0, self.volume + 0.1)
+        self.set_volume(new_volume)
+        return new_volume
+    
+    def decrease_volume(self):
+        """Decrease volume by 0.1"""
+        new_volume = max(0.0, self.volume - 0.1)
+        self.set_volume(new_volume)
+        return new_volume
+    
+    def next_track(self):
+        """Play the next track in the playlist"""
+        next_song = self.playlist.get_next_song()
+        if next_song:
+            song_path, lyrics_path = next_song
+            self.stop()  # Stop current playback
+            self.load_song(song_path, lyrics_path)
+            self.play()
+            return True
+        return False
+    
+    def prev_track(self):
+        """Play the previous track in the playlist"""
+        prev_song = self.playlist.get_prev_song()
+        if prev_song:
+            song_path, lyrics_path = prev_song
+            self.stop()  # Stop current playback
+            self.load_song(song_path, lyrics_path)
+            self.play()
+            return True
+        return False
+    
+    def load_playlist(self):
+        """Load the playlist from available songs"""
+        self.playlist = Playlist()
+    
+    def get_current_track_info(self):
+        """Get information about the current track"""
+        return {
+            'track_number': self.playlist.get_current_index() + 1,
+            'total_tracks': self.playlist.get_song_count(),
+            'track_name': self.playlist.get_current_song_name()
+        }
+    
+    def toggle_shuffle(self):
+        """Toggle shuffle mode"""
+        self.playlist.shuffle()
+    
+    def toggle_repeat(self):
+        """Toggle repeat mode"""
+        return self.playlist.toggle_repeat()
+    
+    def set_visualization_mode(self, mode):
+        """Set the visualization mode: 'bars', 'waveform', 'spectrum'"""
+        return self.lyrics_display.set_visualization_mode(mode)
+    
+    def cycle_visualization_mode(self):
+        """Cycle through visualization modes"""
+        current_mode = self.lyrics_display.get_visualization_mode()
+        if current_mode == "bars":
+            new_mode = "waveform"
+        elif current_mode == "waveform":
+            new_mode = "spectrum"
+        else:
+            new_mode = "bars"
+        self.lyrics_display.set_visualization_mode(new_mode)
+        return new_mode

@@ -4,7 +4,7 @@ A console-based music player that displays real-time synchronized lyrics and a d
 
 ## Features
 
--   **Audio Playback**: Smooth playback of audio files (MP3, WAV, OGG) using `pygame.mixer`.
+-   **Audio Playback**: Smooth playback of audio files (MP3, WAV, OGG, FLAC, M4A, AAC, WMA, OPUS, AIFF, AU) using `pygame.mixer`.
 -   **Synchronized Lyrics**: Displays lyrics from LRC files with a "typing" effect synchronized to the music.
 -   **Dynamic Visual Equalizer**: A real-time console equalizer built with `rich`, featuring:
     -   Smooth bar transitions with a decay effect.
@@ -47,6 +47,14 @@ This project relies on several key Python libraries:
 -   `p` - Pause / Resume
 -   `s` - Stop playback and return to the menu
 -   `q` - Quit the application
+-   `+` - Increase volume
+-   `-` - Decrease volume
+-   `n` - Next track
+-   `b` - Previous track
+-   `r` - Toggle repeat mode (none → all → one → none)
+-   `h` - Toggle shuffle mode
+-   `?` - Show help
+-   `v` - Cycle visualization modes (bars → waveform → spectrum → bars)
 
 ## Technical Implementation
 
@@ -66,6 +74,11 @@ music_player/
 ├── main.py           # Main application entry point and user interaction logic.
 ├── player.py         # MusicPlayer class, handles audio loading, playback, and analysis.
 ├── lyrics_display.py # Manages the console UI, including lyrics and equalizer rendering.
+├── audio_processor.py # Audio processing and FFT analysis module.
+├── playlist.py       # Playlist management module.
+├── visualizer.py     # Audio visualization modes (bars, waveform, spectrum).
+├── utils.py          # Utility functions for file handling, formatting, etc.
+├── config.py         # Configuration settings for the application.
 ├── requirements.txt  # Project dependencies.
 ├── README.md         # Project documentation.
 ├── songs/            # Directory for your music files.

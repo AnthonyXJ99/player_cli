@@ -9,9 +9,12 @@ from rich.text import Text
 from rich.align import Align
 from rich.layout import Layout
 from rich.color import Color
+from rich.progress import Progress, BarColumn, TextColumn
+from config import DEFAULT_EQ_BANDS, CONSOLE_REFRESH_RATE
+from visualizer import VisualizationModes
 
 class LyricsDisplay:
-    def __init__(self, num_eq_bands=16):
+    def __init__(self, num_eq_bands=DEFAULT_EQ_BANDS):
         self.console = Console(force_terminal=True)
         self.active = False
         self.live = None
@@ -22,9 +25,14 @@ class LyricsDisplay:
         self.num_eq_bands = num_eq_bands
         self.eq_bands = [0.0] * self.num_eq_bands
         self.decayed_eq_bands = [0.0] * self.num_eq_bands # For smoother decay
+        self.smoothed_eq_bands = [0.0] * self.num_eq_bands  # For additional smoothing
         self.decay_rate = 0.2 # How fast bars fall, tune this value
+        self.smoothing_factor = 0.3  # Smoothing factor for moving average
         self.hue_offset = 0.0 # For dynamic color cycling
         self.eq_lock = threading.Lock()
+        
+        # Visualization modes
+        self.visualizer = VisualizationModes(num_bands=self.num_eq_bands)
 
         # Estado de las letras
         self.current_line_idx = -1
@@ -33,12 +41,18 @@ class LyricsDisplay:
         self.typing_progress = 0
         self.last_char_time = 0
         self.lyric_colors = ["bright_cyan", "bright_magenta", "bright_yellow", "bright_green", "bright_blue", "bright_red"]
+        
+        # Estado de la barra de progreso
+        self.current_time = 0
+        self.total_time = 0
+        self.progress_text = Text("00:00 / 00:00", justify="center")
 
     def _create_layout(self):
         layout = Layout()
-        layout.split(Layout(name="header", size=3), Layout(name="body", ratio=1))
+        layout.split(Layout(name="header", size=3), Layout(name="middle", ratio=1), Layout(name="progress", size=3))
         layout["header"].split_row(Layout(name="eq"))
-        layout["body"].split_column(Layout(name="lyrics"))
+        layout["middle"].split_column(Layout(name="lyrics"))
+        layout["progress"].split_row(Layout(name="progress_bar"))
         return layout
 
     def update_eq(self, bands):
@@ -49,35 +63,46 @@ class LyricsDisplay:
                 self.decayed_eq_bands[i] = max(self.decayed_eq_bands[i] - self.decay_rate, 0.0)
                 # Update with new value (only if new value is higher)
                 self.decayed_eq_bands[i] = max(self.decayed_eq_bands[i], bands[i])
+                
+                # Apply additional smoothing using moving average
+                self.smoothed_eq_bands[i] = (
+                    self.smoothing_factor * self.decayed_eq_bands[i] + 
+                    (1 - self.smoothing_factor) * self.smoothed_eq_bands[i]
+                )
+    
+    def update_progress(self, current_time, total_time):
+        """Actualizar información de progreso de la reproducción"""
+        self.current_time = current_time
+        self.total_time = total_time
+        self.progress_text = Text(f"{self._format_time(current_time)} / {self._format_time(total_time)}", justify="center")
+    
+    def _format_time(self, seconds):
+        """Format seconds to MM:SS format"""
+        minutes = int(seconds // 60)
+        seconds = int(seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
+    
+    def set_smoothing_factor(self, factor):
+        """Adjust the smoothing factor (0.0 to 1.0)"""
+        if 0.0 <= factor <= 1.0:
+            self.smoothing_factor = factor
+    
+    def set_visualization_mode(self, mode):
+        """Set the visualization mode: 'bars', 'waveform', 'spectrum'"""
+        return self.visualizer.set_mode(mode)
+    
+    def get_visualization_mode(self):
+        """Get the current visualization mode"""
+        return self.visualizer.get_mode()
 
     def _generate_eq_text(self):
         """Genera un objeto Text de Rich a partir de los datos de las bandas del ecualizador."""
-        bar_chars = " ▂▃▄▅▆▇█"
-        num_chars = len(bar_chars)
-        eq_text = Text()
-        
-        # Escalar las barras para que se ajusten al ancho de la consola
+        # Use the visualization modes
         width = self.console.width or 80
-        for i in range(width):
-            band_index = int(i * self.num_eq_bands / width)
-            with self.eq_lock:
-                band_height = self.decayed_eq_bands[band_index]
-
-            # Mapear la altura (0.0-1.0) a un carácter de la barra
-            char_index = min(int(band_height * num_chars), num_chars - 1)
-            char = bar_chars[char_index]
-            
-            # Dynamic color based on hue_offset and band position
-            hue = (i / self.num_eq_bands + self.hue_offset) % 1.0
-            # Saturation and Lightness can also be dynamic based on band_height
-            sat = 0.8 # Fixed for now
-            light = 0.5 + band_height * 0.4 # Brighter for higher bars
-            
-            # Convert HSL to RGB and then to hex for rich
-            r, g, b = colorsys.hls_to_rgb(hue, light, sat)
-            color_hex = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
-            eq_text.append(char, style=color_hex)
-        return eq_text
+        with self.eq_lock:
+            # Use the smoothed bands for visualization
+            bands_to_use = list(self.smoothed_eq_bands)
+        return self.visualizer.generate_visualization(bands_to_use, width)
 
     def _animate(self):
         while self.active:
@@ -117,6 +142,20 @@ class LyricsDisplay:
             self.layout["lyrics"].update(Align.center(lyric_renderable, vertical="top"))
             end_lyrics_update_time = time.perf_counter()
             # print(f"[DEBUG Lyrics] layout[\"lyrics\"] update took: {(end_lyrics_update_time - start_lyrics_update_time)*1000:.2f} ms")
+
+            # Update progress bar
+            progress_percentage = (self.current_time / self.total_time) * 100 if self.total_time > 0 else 0
+            progress_description = f"{self._format_time(self.current_time)} / {self._format_time(self.total_time)}"
+            
+            # Create a simple progress representation without Rich's Progress
+            bar_length = 50  # Length of the progress bar in characters
+            filled_length = int(bar_length * progress_percentage / 100)
+            bar = '█' * filled_length + '░' * (bar_length - filled_length)
+            progress_text = f"[{bar}] {progress_percentage:.1f}% {progress_description}"
+            
+            from rich.panel import Panel
+            progress_panel = Panel(progress_text, title="Progress", border_style="blue")
+            self.layout["progress_bar"].update(Align.center(progress_panel, vertical="middle"))
 
             time.sleep(0.05)
 
