@@ -41,6 +41,12 @@ class MusicPlayer:
             except Exception as e:
                 print(f"Warning: Could not load lyrics file: {e}")
                 self.lyrics = None
+            
+            # Get and display song information
+            song_info = self.get_song_info(song_path)
+            if hasattr(self.lyrics_display, 'update_song_info'):
+                self.lyrics_display.update_song_info(song_info)
+                
         except Exception as e:
             print(f"Error loading song: {e}")
             self.song_loaded = False
@@ -123,6 +129,9 @@ class MusicPlayer:
         if 0.0 <= volume <= 1.0:
             self.volume = volume
             pygame.mixer.music.set_volume(volume)
+            # Update visual volume indicator
+            if hasattr(self.lyrics_display, 'update_volume_display'):
+                self.lyrics_display.update_volume_display(volume)
     
     def get_volume(self):
         """Get current volume level"""
@@ -197,3 +206,40 @@ class MusicPlayer:
             new_mode = "bars"
         self.lyrics_display.set_visualization_mode(new_mode)
         return new_mode
+    
+    def get_song_info(self, song_path):
+        """Get song information like duration, artist, title from file"""
+        try:
+            from mutagen.mp3 import MP3
+            from mutagen.id3 import ID3NoHeaderError
+            audio = MP3(song_path)
+            
+            info = {
+                'duration': audio.info.length if audio else 0,
+                'bitrate': audio.info.bitrate if audio else 0,
+                'sample_rate': audio.info.sample_rate if audio else 0
+            }
+            
+            # Try to get ID3 tags
+            try:
+                tags = ID3(song_path)
+                info['title'] = str(tags.get("TIT2", "")) or os.path.splitext(os.path.basename(song_path))[0]
+                info['artist'] = str(tags.get("TPE1", "")) or "Unknown Artist"
+                info['album'] = str(tags.get("TALB", "")) or "Unknown Album"
+            except ID3NoHeaderError:
+                # No ID3 tags, use filename
+                info['title'] = os.path.splitext(os.path.basename(song_path))[0]
+                info['artist'] = "Unknown Artist"
+                info['album'] = "Unknown Album"
+                
+            return info
+        except:
+            # Fallback if mutagen fails
+            return {
+                'title': os.path.splitext(os.path.basename(song_path))[0],
+                'artist': "Unknown Artist",
+                'album': "Unknown Album",
+                'duration': 0,
+                'bitrate': 0,
+                'sample_rate': 0
+            }

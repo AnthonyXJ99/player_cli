@@ -4,6 +4,7 @@ import numpy as np
 import colorsys
 from rich.text import Text
 from rich.align import Align
+from rich.style import Style
 from config import DEFAULT_EQ_BANDS
 
 
@@ -39,7 +40,7 @@ class VisualizationModes:
             return self._generate_bars_visualization(bands, console_width)
     
     def _generate_bars_visualization(self, bands, console_width):
-        """Generate the original bar visualization"""
+        """Generate a more dynamic bar visualization"""
         text = Text()
         num_chars = len(self.bar_chars)
         
@@ -51,10 +52,13 @@ class VisualizationModes:
             char_index = min(int(band_height * (num_chars - 1)), num_chars - 1)
             char = self.bar_chars[char_index]
             
-            # Dynamic color based on position and height
-            hue = (i / console_width) % 1.0
-            sat = 0.8
-            light = 0.5 + band_height * 0.4
+            # More sophisticated dynamic color based on position, height, and animation
+            # Use the hue offset to create a flowing color effect
+            pos_hue = (i / console_width) * 0.66  # Range from red to cyan
+            height_factor = band_height * 0.5
+            hue = (pos_hue + height_factor) % 1.0
+            sat = 0.7 + band_height * 0.3  # Higher bars are more saturated
+            light = 0.4 + band_height * 0.5  # Higher bars are brighter
             
             r, g, b = colorsys.hls_to_rgb(hue, light, sat)
             color_hex = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
@@ -63,21 +67,33 @@ class VisualizationModes:
         return text
     
     def _generate_waveform_visualization(self, bands, console_width):
-        """Generate a waveform like visualization"""
+        """Generate a more sophisticated waveform like visualization"""
         text = Text()
-        # Normalize and center the waveform
+        # Create a more detailed waveform that shows positive and negative values
         for i in range(console_width):
             band_index = min(int(i * self.num_bands / console_width), self.num_bands - 1)
             amplitude = bands[band_index] if band_index < len(bands) else 0
             
-            # Waveform character based on amplitude
-            char_index = min(int(amplitude * (len(self.wave_chars) - 1)), len(self.wave_chars) - 1)
-            char = self.wave_chars[char_index]
+            # Create a more complex waveform with different characters for different amplitudes
+            if amplitude < 0.1:
+                char = " "
+            elif amplitude < 0.2:
+                char = "."
+            elif amplitude < 0.3:
+                char = "-"
+            elif amplitude < 0.45:
+                char = "~"
+            elif amplitude < 0.6:
+                char = "*"
+            elif amplitude < 0.75:
+                char = "#"
+            else:
+                char = "@"
             
-            # Color based on amplitude
-            hue = 0.3  # Green-blue hue for waveform
-            sat = 0.7
-            light = 0.3 + amplitude * 0.6
+            # Dynamic color based on position and amplitude
+            hue = (i / console_width) * 0.66  # Range from red to cyan
+            sat = 0.8
+            light = 0.4 + amplitude * 0.5
             
             r, g, b = colorsys.hls_to_rgb(hue, light, sat)
             color_hex = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"
@@ -86,10 +102,10 @@ class VisualizationModes:
         return text
     
     def _generate_spectrum_visualization(self, bands, console_width):
-        """Generate a spectrum analyzer like visualization"""
+        """Generate a more detailed spectrum analyzer like visualization"""
         text = Text()
         
-        # Create a spectrum effect by interpolating bands to fill console width
+        # Create a more detailed spectrum effect by interpolating bands to fill console width
         for i in range(console_width):
             # Map console position to band index
             band_pos = (i / console_width) * (self.num_bands - 1)
@@ -105,22 +121,44 @@ class VisualizationModes:
             else:
                 amplitude = 0
             
-            # Spectrum character (use different characters for different frequencies)
-            if amplitude < 0.2:
-                char = " "
-            elif amplitude < 0.4:
-                char = "."
-            elif amplitude < 0.6:
-                char = "o"
-            elif amplitude < 0.8:
-                char = "O"
-            else:
-                char = "@"
+            # Create frequency-dependent visualization - low, mid, high frequencies
+            freq_pos = i / console_width
             
-            # Color based on position (low to high frequencies)
-            hue = (i / console_width) * 0.33  # Red to green range
-            sat = 0.9
-            light = 0.4 + amplitude * 0.5
+            # Use different characters based on frequency range and amplitude
+            if amplitude < 0.05:
+                char = " "
+            elif freq_pos < 0.33:  # Low frequencies (bass)
+                if amplitude < 0.3:
+                    char = "█"
+                elif amplitude < 0.6:
+                    char = "▓"
+                else:
+                    char = "▒"
+            elif freq_pos < 0.66:  # Mid frequencies
+                if amplitude < 0.3:
+                    char = "▓"
+                elif amplitude < 0.6:
+                    char = "▒"
+                else:
+                    char = "░"
+            else:  # High frequencies (treble)
+                if amplitude < 0.3:
+                    char = "░"
+                elif amplitude < 0.6:
+                    char = "•"
+                else:
+                    char = "○"
+            
+            # Color based on position (low to high frequencies) with more dynamic colors
+            if freq_pos < 0.33:  # Low frequencies - red-orange
+                hue = 0.0 + (freq_pos * 0.1)  # Red to orange
+            elif freq_pos < 0.66:  # Mid frequencies - yellow-green
+                hue = 0.15 + ((freq_pos - 0.33) * 0.15)  # Yellow to green
+            else:  # High frequencies - blue-purple
+                hue = 0.33 + ((freq_pos - 0.66) * 0.33)  # Green to purple
+            
+            sat = 0.7 + amplitude * 0.3
+            light = 0.3 + amplitude * 0.5
             
             r, g, b = colorsys.hls_to_rgb(hue, light, sat)
             color_hex = f"#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}"

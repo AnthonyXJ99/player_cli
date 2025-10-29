@@ -3,3 +3,4 @@ pylrc==0.1.2
 rich==14.2.0
 numpy
 pydub
+mutagen==1.47.0

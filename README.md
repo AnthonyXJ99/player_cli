@@ -6,11 +6,17 @@ A console-based music player that displays real-time synchronized lyrics and a d
 
 -   **Audio Playback**: Smooth playback of audio files (MP3, WAV, OGG, FLAC, M4A, AAC, WMA, OPUS, AIFF, AU) using `pygame.mixer`.
 -   **Synchronized Lyrics**: Displays lyrics from LRC files with a "typing" effect synchronized to the music.
+-   **Automatic Lyrics Extraction**: Can extract lyrics embedded in MP3 files and create LRC files automatically.
 -   **Dynamic Visual Equalizer**: A real-time console equalizer built with `rich`, featuring:
     -   Smooth bar transitions with a decay effect.
     -   Dynamic color cycling based on HSL for a vibrant look.
+    -   Multiple visualization modes (bars, waveform, spectrum).
 -   **Rich Console UI**: An attractive and modern user interface powered by the `rich` library.
 -   **Playback Controls**: Basic controls for pause/resume, stop, and exit.
+-   **Playlist Management**: Navigate between tracks, shuffle, and repeat modes.
+-   **Volume Control**: Adjust volume up/down during playback.
+-   **Progress Display**: Shows playback progress with time indicators.
+-   **Paginated Song Selection**: Browses through large song libraries with pagination.
 
 ## Core Libraries
 
@@ -76,11 +82,13 @@ music_player/
 ├── lyrics_display.py # Manages the console UI, including lyrics and equalizer rendering.
 ├── audio_processor.py # Audio processing and FFT analysis module.
 ├── playlist.py       # Playlist management module.
+├── lyrics_extractor.py # Module for extracting lyrics from MP3 files.
 ├── visualizer.py     # Audio visualization modes (bars, waveform, spectrum).
 ├── utils.py          # Utility functions for file handling, formatting, etc.
 ├── config.py         # Configuration settings for the application.
 ├── requirements.txt  # Project dependencies.
 ├── README.md         # Project documentation.
+├── .gitignore        # Git ignore file.
 ├── songs/            # Directory for your music files.
 └── lyrics/           # Directory for your LRC lyric files.
 ```
