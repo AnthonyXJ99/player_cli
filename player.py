@@ -112,8 +112,13 @@ class MusicPlayer:
         self.lyrics_display.stop()
         pygame.mixer.music.stop()
         pygame.mixer.music.unload()  # Explicitly unload the music
-        if self.analysis_thread:
+        
+        # Only join the analysis thread if it's not the current thread
+        if self.analysis_thread and self.analysis_thread != threading.current_thread():
             self.analysis_thread.join()
+        elif self.analysis_thread:
+            # If it's the same thread, just reset the reference
+            self.analysis_thread = None
         
         # Clean up audio processor resources
         self.audio_processor.cleanup()
